@@ -19,6 +19,8 @@
       .suggest::-webkit-scrollbar-thumb { background: #c7c7c7; border-radius: 4px; }
       .suggest-item { padding: 8px 10px; font-size: 13px; cursor: pointer; }
       .suggest-item:hover, .suggest-item.active { background: #f5f5f5; }
+      .input-wrap.loading::after { content: ""; position: absolute; right: 10px; top: 50%; width: 16px; height: 16px; margin-top: -8px; border-radius: 50%; border: 2px solid #999; border-top-color: transparent; animation: spin .8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
       #map { height: 100%; }
       .pill { padding: 0 10px; height: 28px; display: inline-flex; align-items: center; border-radius: 14px; background: #f5f5f5; font-size: 12px; }
       .legend { position: absolute; right: 12px; bottom: 12px; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; }
@@ -53,7 +55,6 @@
         </div>
       <div id="map"></div>
       <div class="legend" id="legend"></div>
-      <div class="legend" style="right:auto; left:12px; bottom:60px" id="backendStatus"></div>
       <div class="side" id="side"></div>
     </div>
 
@@ -70,33 +71,7 @@
           backendBase = location.origin;
         }
       } catch (_) {}
-      (async () => {
-        if (!backendBase) return;
-        // 若用户显式通过 ?backend= 指定后端，则不降级，直接使用
-        if (backendProvided) return;
-        try {
-          const r = await fetch(backendBase + '/api/status', { cache: 'no-store' });
-          if (!r.ok) backendBase = '';
-        } catch (e) {
-          backendBase = '';
-        }
-      })();
-      function setBackendStatus(text, ok) {
-        const el = document.getElementById('backendStatus');
-        el.innerHTML = `<div style="font-size:12px"><strong>后端状态：</strong> ${text}</div>`;
-        el.style.borderLeft = `4px solid ${ok ? '#2e7d32' : '#d81b60'}`;
-      }
-      (async () => {
-        try {
-          if (!backendBase) { setBackendStatus('未连接（使用本地直连或URL密钥）', false); return; }
-          const r = await fetch(backendBase + '/api/env-check');
-          if (!r.ok) { setBackendStatus('不可用（/api/env-check 失败）', false); return; }
-          const j = await r.json();
-          setBackendStatus(`已连接（has_amap_key=${j.has_amap_key}）`, !!j.has_amap_key);
-        } catch (e) {
-          setBackendStatus('不可用（网络或域名未绑定部署）', false);
-        }
-      })();
+      // 移除调试状态逻辑；运行时统一按 backendBase 优先走后端
       const tileSources = {
         osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }),
         'carto-light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> & OpenStreetMap' }),
@@ -129,9 +104,15 @@
       }
       renderLegend();
 
-      async function geocodePlaceAMap(q, key) {
-        if (!key) throw new Error('请填写高德key');
-        const url = backendBase ? `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=1&page=1&extensions=base`;
+      async function geocodePlaceAMap(q) {
+        let url = '';
+        if (backendBase) {
+          url = `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}`;
+        } else {
+          const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+          if (!key) throw new Error('请填写高德key');
+          url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=1&page=1&extensions=base`;
+        }
         const res = await fetch(url);
         if (!res.ok) throw new Error('高德地理搜索失败');
         const data = await res.json();
@@ -143,8 +124,14 @@
       }
 
       async function suggestPlaces(q) {
-        const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
-        const url = backendBase ? `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}&offset=8` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+        let url = '';
+        if (backendBase) {
+          url = `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}&offset=8`;
+        } else {
+          const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+          if (!key) return [];
+          url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+        }
         const res = await fetch(url);
         if (!res.ok) return [];
         const data = await res.json();
@@ -155,10 +142,16 @@
         }).filter(i => isFinite(i.lat) && isFinite(i.lon));
       }
 
-      async function fetchPOIsAMap(lat, lon, radius, key) {
-        if (!key) throw new Error('请填写高德 key');
+      async function fetchPOIsAMap(lat, lon, radius) {
         const types = encodeURIComponent('餐饮服务|购物服务|生活服务|金融保险服务');
-        const url = backendBase ? `${backendBase}/api/amap-place-around?location=${lon},${lat}&radius=${radius}&types=${types}` : `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${lon},${lat}&radius=${radius}&types=${types}&output=json`; 
+        let url = '';
+        if (backendBase) {
+          url = `${backendBase}/api/amap-place-around?location=${lon},${lat}&radius=${radius}&types=${types}`;
+        } else {
+          const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+          if (!key) throw new Error('请填写高德 key');
+          url = `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${lon},${lat}&radius=${radius}&types=${types}&output=json`;
+        }
         const res = await fetch(url);
         if (!res.ok) throw new Error('高德POI检索失败');
         const data = await res.json();
@@ -238,19 +231,18 @@
         if (!place) return;
         clearResults();
         try {
+          setInputLoading(true);
           let geo = null;
           if (preset) {
             geo = { lat: preset.lat, lon: preset.lon, displayName: preset.name };
           } else {
-            const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
-            geo = await geocodePlaceAMap(place, key);
+            geo = await geocodePlaceAMap(place);
           }
           const center = [geo.lat, geo.lon];
           map.setView(center, 15);
           circleLayer = L.circle(center, { radius, color: '#1976d2', fillColor: '#1976d2', fillOpacity: 0.08, weight: 1 }).addTo(map);
           let elements = [];
-          const key2 = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
-          elements = await fetchPOIsAMap(geo.lat, geo.lon, radius, key2);
+          elements = await fetchPOIsAMap(geo.lat, geo.lon, radius);
           const items = [];
           elements.forEach(e => {
             const pos = centerOf(e);
@@ -264,7 +256,9 @@
           });
           document.getElementById('count').textContent = `POI: ${items.length}`;
           document.getElementById('side').innerHTML = items.map(i => `<div class="poi-item"><strong>${i.name}</strong><br/>${i.type}</div>`).join('');
+          setInputLoading(false);
         } catch (err) {
+          setInputLoading(false);
           alert(err.message || '发生错误');
         }
       }
@@ -272,20 +266,24 @@
       document.getElementById('searchBtn').addEventListener('click', () => runSearch());
       const placeInput = document.getElementById('placeInput');
       const suggestEl = document.getElementById('placeSuggest');
+      const inputWrap = placeInput.parentElement;
+      const setInputLoading = (b) => { inputWrap.classList.toggle('loading', !!b); };
       let suggestTimer = null;
       let suggestIndex = -1;
       let suggestData = [];
       placeInput.addEventListener('input', () => {
         const q = placeInput.value.trim();
         if (suggestTimer) clearTimeout(suggestTimer);
-        if (q.length < 2) { suggestEl.hidden = true; suggestEl.innerHTML = ''; suggestData = []; suggestIndex = -1; return; }
+        if (q.length < 2) { setInputLoading(false); suggestEl.hidden = true; suggestEl.innerHTML = ''; suggestData = []; suggestIndex = -1; return; }
         suggestTimer = setTimeout(async () => {
+          setInputLoading(true);
           const list = await suggestPlaces(q);
           suggestData = list;
           suggestIndex = -1;
           if (!list.length) { suggestEl.hidden = true; suggestEl.innerHTML = ''; return; }
           suggestEl.innerHTML = list.map((i, idx) => `<div class="suggest-item" data-idx="${idx}">${i.name}</div>`).join('');
           suggestEl.hidden = false;
+          setInputLoading(false);
         }, 250);
       });
       placeInput.addEventListener('keydown', e => {
