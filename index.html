@@ -53,6 +53,7 @@
         </div>
       <div id="map"></div>
       <div class="legend" id="legend"></div>
+      <div class="legend" style="right:auto; left:12px; bottom:60px" id="backendStatus"></div>
       <div class="side" id="side"></div>
     </div>
 
@@ -78,6 +79,22 @@
           if (!r.ok) backendBase = '';
         } catch (e) {
           backendBase = '';
+        }
+      })();
+      function setBackendStatus(text, ok) {
+        const el = document.getElementById('backendStatus');
+        el.innerHTML = `<div style="font-size:12px"><strong>后端状态：</strong> ${text}</div>`;
+        el.style.borderLeft = `4px solid ${ok ? '#2e7d32' : '#d81b60'}`;
+      }
+      (async () => {
+        try {
+          if (!backendBase) { setBackendStatus('未连接（使用本地直连或URL密钥）', false); return; }
+          const r = await fetch(backendBase + '/api/env-check');
+          if (!r.ok) { setBackendStatus('不可用（/api/env-check 失败）', false); return; }
+          const j = await r.json();
+          setBackendStatus(`已连接（has_amap_key=${j.has_amap_key}）`, !!j.has_amap_key);
+        } catch (e) {
+          setBackendStatus('不可用（网络或域名未绑定部署）', false);
         }
       })();
       const tileSources = {
