@@ -4,9 +4,6 @@
     { "src": "package.json", "use": "@vercel/static-build", "config": { "distDir": "dist" } },
     { "src": "api/*.js", "use": "@vercel/node" }
   ],
-  "functions": {
-    "api/*.js": { "runtime": "nodejs18.x" }
-  },
   "routes": [
     { "src": "/api/amap-place-text", "dest": "/api/amap-place-text.js" },
     { "src": "/api/amap-place-around", "dest": "/api/amap-place-around.js" },
