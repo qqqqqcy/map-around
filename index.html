@@ -11,7 +11,7 @@
     <style>
       html, body { height: 100%; margin: 0; }
       #app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
-      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
+      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
       .toolbar input, .toolbar select, .toolbar button { height: 34px; padding: 0 8px; font-size: 14px; }
       .input-wrap { position: relative; }
       .suggest { position: absolute; left: 0; right: 0; top: 38px; background: rgba(255,255,255,0.98); border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); max-height: 260px; overflow: auto; z-index: 10000; }
@@ -44,8 +44,6 @@
             <option value="carto-light">Carto Light</option>
             <option value="carto-dark">Carto Dark</option>
           </select>
-          <input id="offsetInput" type="number" min="10" step="10" value="50" placeholder="每页" />
-          <input id="pagesInput" type="number" min="1" step="1" value="10" placeholder="页数" />
           <select id="iconSelect">
             <option value="by-type">按类型着色</option>
             <option value="red">红色图标</option>
@@ -126,28 +124,36 @@
       }
 
       async function suggestPlaces(q) {
-        let url = '';
-        if (backendBase) {
-          url = `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}&offset=8`;
-        } else {
-          const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
-          if (!key) return [];
-          url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+        try {
+          let url = '';
+          if (backendBase) {
+            url = `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(q)}&offset=8`;
+          } else {
+            const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+            if (!key) return [];
+            url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+          }
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('amap suggest failed');
+          const data = await res.json();
+          if (data.status !== '1') return [];
+          return (data.pois || []).map(p => {
+            const [lng, lat] = (p.location || '').split(',').map(Number);
+            return { name: p.name, lat, lon: lng };
+          }).filter(i => isFinite(i.lat) && isFinite(i.lon));
+        } catch (e) {
+          // Fallback to OSM Nominatim
+          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(q)}`;
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) return [];
+          const data = await res.json();
+          return data.map(d => ({ name: d.display_name, lat: parseFloat(d.lat), lon: parseFloat(d.lon) }));
         }
-        const res = await fetch(url);
-        if (!res.ok) return [];
-        const data = await res.json();
-        if (data.status !== '1') return [];
-        return (data.pois || []).map(p => {
-          const [lng, lat] = (p.location || '').split(',').map(Number);
-          return { name: p.name, lat, lon: lng };
-        }).filter(i => isFinite(i.lat) && isFinite(i.lon));
       }
 
       async function fetchPOIsAMap(lat, lon, radius) {
         const types = encodeURIComponent('餐饮服务|购物服务|生活服务|金融保险服务');
-        const offset = parseInt(document.getElementById('offsetInput').value, 10) || 50;
-        const maxPages = parseInt(document.getElementById('pagesInput').value, 10) || 10;
+        const { offset, maxPages } = choosePaging(radius);
         let page = 1;
         const out = [];
         const seen = new Set();
@@ -249,6 +255,13 @@
         const sinDLon = Math.sin(dLon / 2);
         const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
         return 2 * R * Math.asin(Math.sqrt(h));
+      }
+
+      function choosePaging(radius) {
+        if (radius <= 1000) return { offset: 20, maxPages: 4 };
+        if (radius <= 3000) return { offset: 50, maxPages: 6 };
+        if (radius <= 5000) return { offset: 80, maxPages: 8 };
+        return { offset: 100, maxPages: 10 };
       }
 
       function clearResults() {
