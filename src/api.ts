@@ -2,7 +2,12 @@ export function detectBackendBase(): string {
   const params = new URLSearchParams(location.search)
   const backendParam = params.get('backend') || ''
   const envBase = (import.meta as any).env?.VITE_BACKEND_BASE || ''
-  const base = (backendParam || envBase).replace(/\/$/, '')
+  let base = (backendParam || envBase).replace(/\/$/, '')
+  try {
+    const host = String(location.hostname || '')
+    const isLocal = host === 'localhost' || host.startsWith('127.') || host === '0.0.0.0'
+    if (!base && host && !isLocal) base = location.origin
+  } catch {}
   return base
 }
 
