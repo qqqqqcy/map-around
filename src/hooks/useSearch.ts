@@ -7,15 +7,20 @@ import { svgIcon } from '../utils/icons'
 import { loadTypeTree, toTwoLevels } from '../types'
 import { colorForTopCode } from '../utils/colors'
 
-export function useSearch(mapRef: any, markerLayerRef: any) {
-  const [suggestOptions, setSuggestOptions] = useState<{ value: string; label: string; lat: number; lon: number }[]>([])
-  const [suggestLoading, setSuggestLoading] = useState(false)
-  const [results, setResults] = useState<any[]>([])
-  const [count, setCount] = useState(0)
-  const [searchLoading, setSearchLoading] = useState(false)
+type LatLngTuple = [number, number]
+type SuggestOption = { value: string; label: string; lat: number; lon: number }
+type ResultItem = { name: string; pos: LatLngTuple; dist: number; address: string; type: string; topCode: string; adname: string; sig: string }
+type MapLike = { setView: (center: LatLngTuple, zoom: number) => any; getCenter?: () => { lat: number; lng: number } }
+
+export function useSearch(mapRef: React.MutableRefObject<MapLike | null>, markerLayerRef: React.MutableRefObject<any>) {
+  const [suggestOptions, setSuggestOptions] = useState<SuggestOption[]>([])
+  const [suggestLoading, setSuggestLoading] = useState<boolean>(false)
+  const [results, setResults] = useState<ResultItem[]>([])
+  const [count, setCount] = useState<number>(0)
+  const [searchLoading, setSearchLoading] = useState<boolean>(false)
   const lv1NameToCodeRef = useRef<Record<string, string>>({})
 
-  async function ensureTypeMap() {
+  async function ensureTypeMap(): Promise<void> {
     if (Object.keys(lv1NameToCodeRef.current).length > 0) return
     const tree = await loadTypeTree()
     const two = toTwoLevels(tree)
@@ -24,7 +29,7 @@ export function useSearch(mapRef: any, markerLayerRef: any) {
     lv1NameToCodeRef.current = m
   }
 
-  async function fetchSuggest(backendBase: string, q: string, style: string) {
+  async function fetchSuggest(backendBase: string, q: string, style: string): Promise<void> {
     if (!q.trim() || q.trim().length < 2) { setSuggestOptions([]); return }
     setSuggestLoading(true)
     try {
@@ -35,18 +40,20 @@ export function useSearch(mapRef: any, markerLayerRef: any) {
         else { loc = { lat: center.lat, lon: center.lng } }
       }
       const tips = await amapTips(backendBase, q, loc)
-      const opts = (tips.tips || []).map((t: any) => { const [lng, lat] = String(t.location || '').split(',').map(Number); return { value: String(t.name || q), label: String(t.name || q), lat, lon: lng } }).filter((i: any) => isFinite(i.lat) && isFinite(i.lon))
+      const opts: SuggestOption[] = (tips.tips || [])
+        .map((t: any) => { const [lng, lat] = String(t.location || '').split(',').map(Number); return { value: String(t.name || q), label: String(t.name || q), lat, lon: lng } })
+        .filter((i: SuggestOption) => isFinite(i.lat) && isFinite(i.lon))
       setSuggestOptions(opts)
     } finally { setSuggestLoading(false) }
   }
-  const searchTimerRef = useRef<number | null>(null)
-  function onSearchDebounced(backendBase: string, q: string, style: string) {
-    if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current)
-    searchTimerRef.current = window.setTimeout(() => { fetchSuggest(backendBase, q, style) }, 500)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  function onSearchDebounced(backendBase: string, q: string, style: string): void {
+    if (searchTimerRef.current != null) clearTimeout(searchTimerRef.current as any)
+    searchTimerRef.current = setTimeout(() => { void fetchSuggest(backendBase, q, style) }, 500)
   }
-  useEffect(() => () => { if (searchTimerRef.current) window.clearTimeout(searchTimerRef.current) }, [])
+  useEffect(() => () => { if (searchTimerRef.current != null) clearTimeout(searchTimerRef.current as any) }, [])
 
-  async function runSearch(backendBase: string, place: string, diameter: number, checkedKeys: string[], style: string) {
+  async function runSearch(backendBase: string, place: string, diameter: number, checkedKeys: string[], style: string): Promise<void> {
     if (!place.trim()) return
     await ensureTypeMap()
     const markerLayer = markerLayerRef.current!
@@ -72,7 +79,7 @@ export function useSearch(mapRef: any, markerLayerRef: any) {
       const typesParam = (checkedKeys.length ? checkedKeys : ['060000']).join('|')
       let page = 1, total = 0, boundaryReached = false
       const seen = new Set<string>()
-      const out: any[] = []
+      const out: ResultItem[] = []
       let drawn = 0
       while (!boundaryReached && page < 50) {
         const around = await amapAround(backendBase, { location: `${lonApi},${latApi}`, radius: String(useRadius), types: typesParam, output: 'json', sortrule: 'distance', offset: String(offset), page: String(page) })
@@ -105,12 +112,12 @@ export function useSearch(mapRef: any, markerLayerRef: any) {
         if (isFinite(lastDist) && lastDist > searchRadius) { boundaryReached = true; break }
         page++
         // incremental update
-        const outSorted = out.slice().sort((a, b) => a.dist - b.dist)
+        const outSorted = out.slice().sort((a: ResultItem, b: ResultItem) => a.dist - b.dist)
         setResults(outSorted)
         setCount(total)
         await new Promise(r => setTimeout(r, 1000))
       }
-      out.sort((a, b) => a.dist - b.dist)
+      out.sort((a: ResultItem, b: ResultItem) => a.dist - b.dist)
       setResults(out)
       setCount(total)
     } finally { setSearchLoading(false) }
