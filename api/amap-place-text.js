@@ -10,7 +10,8 @@ module.exports = async function(req, res) {
   if (!key) return res.status(500).json({ status: 0, info: 'Missing AMAP_KEY' });
   const url = `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(keywords)}&citylimit=false&offset=${encodeURIComponent(offset)}&page=1&extensions=base`;
   try {
-    const r = await fetch(url);
+    const _fetch = globalThis.fetch ? globalThis.fetch : (await import('node-fetch')).default;
+    const r = await _fetch(url);
     const data = await r.json();
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).json(data);

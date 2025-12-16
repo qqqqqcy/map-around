@@ -20,7 +20,8 @@ module.exports = async function(req, res) {
   });
   const url = `https://restapi.amap.com/v3/place/around?${params.toString()}`;
   try {
-    const r = await fetch(url);
+    const _fetch = globalThis.fetch ? globalThis.fetch : (await import('node-fetch')).default;
+    const r = await _fetch(url);
     const data = await r.json();
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.status(200).json(data);
