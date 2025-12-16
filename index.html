@@ -11,7 +11,7 @@
     <style>
       html, body { height: 100%; margin: 0; }
       #app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
-      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
+      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
       .toolbar input, .toolbar select, .toolbar button { height: 34px; padding: 0 8px; font-size: 14px; }
       .input-wrap { position: relative; }
       .suggest { position: absolute; left: 0; right: 0; top: 38px; background: rgba(255,255,255,0.98); border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); max-height: 260px; overflow: auto; z-index: 10000; }
@@ -44,6 +44,8 @@
             <option value="carto-light">Carto Light</option>
             <option value="carto-dark">Carto Dark</option>
           </select>
+          <input id="offsetInput" type="number" min="10" step="10" value="50" placeholder="每页" />
+          <input id="pagesInput" type="number" min="1" step="1" value="10" placeholder="页数" />
           <select id="iconSelect">
             <option value="by-type">按类型着色</option>
             <option value="red">红色图标</option>
@@ -144,12 +146,14 @@
 
       async function fetchPOIsAMap(lat, lon, radius) {
         const types = encodeURIComponent('餐饮服务|购物服务|生活服务|金融保险服务');
-        const offset = 50;
-        const maxPages = 10;
+        const offset = parseInt(document.getElementById('offsetInput').value, 10) || 50;
+        const maxPages = parseInt(document.getElementById('pagesInput').value, 10) || 10;
         let page = 1;
         const out = [];
         const seen = new Set();
-        while (page <= maxPages) {
+        const centerPt = [lat, lon];
+        let boundaryReached = false;
+        while (page <= maxPages && !boundaryReached) {
           let url = '';
           if (backendBase) {
             url = `${backendBase}/api/amap-place-around?location=${lon},${lat}&radius=${radius}&types=${types}&sortrule=distance&offset=${offset}&page=${page}`;
@@ -165,6 +169,10 @@
           const pois = data.pois || [];
           for (const p of pois) {
             const pos = p.location ? p.location.split(',').reverse().map(Number) : null;
+            if (!pos) continue;
+            const dist = distanceMeters(centerPt, pos);
+            // 因为已按距离排序，首次超出半径即视为边界，停止后续分页
+            if (dist > radius) { boundaryReached = true; break; }
             const name = p.name || '';
             const keySig = `${name}|${p.location || ''}`;
             if (seen.has(keySig)) continue;
