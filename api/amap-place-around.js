@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async function(req, res) {
   const origin = req.headers.origin || '*';
   const allowed = process.env.ALLOWED_ORIGIN;
   const allowOrigin = allowed ? (origin === allowed ? origin : allowed) : origin;
