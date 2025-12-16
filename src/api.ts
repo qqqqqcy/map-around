@@ -2,18 +2,13 @@ export function detectBackendBase(): string {
   const params = new URLSearchParams(location.search)
   const backendParam = params.get('backend') || ''
   const envBase = (import.meta as any).env?.VITE_BACKEND_BASE || ''
-  let base = (backendParam || envBase).replace(/\/$/, '')
-  try {
-    const host = String(location.hostname || '')
-    const isLocal = host === 'localhost' || host.startsWith('127.') || host === '0.0.0.0'
-    if (!base && host && !isLocal) base = location.origin
-  } catch {}
+  const base = (backendParam || envBase).replace(/\/$/, '')
   return base
 }
 
 function detectAmapKey(): string {
   const params = new URLSearchParams(location.search)
-  const envKey = (import.meta as any).env?.VITE_AMAP_KEY || ''
+  const envKey = (import.meta as any).env?.AMAP_KEY || ''
   return params.get('amap_key') || envKey
 }
 
