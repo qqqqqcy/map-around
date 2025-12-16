@@ -2,10 +2,13 @@
   "version": 2,
   "builds": [
     { "src": "index.html", "use": "@vercel/static" },
-    { "src": "api/**/*.js", "use": "@vercel/node" }
+    { "src": "api/*.js", "use": "@vercel/node" }
   ],
   "routes": [
-    { "src": "/api/(.*)", "dest": "/api/$1" }
+    { "src": "/api/status", "dest": "/api/status.js" },
+    { "src": "/api/env-check", "dest": "/api/env-check.js" },
+    { "src": "/api/amap-place-text", "dest": "/api/amap-place-text.js" },
+    { "src": "/api/amap-place-around", "dest": "/api/amap-place-around.js" },
+    { "src": "/api", "dest": "/api/index.js" }
   ]
 }
-
