@@ -9,9 +9,19 @@ module.exports = async function(req, res) {
     return res.status(200).end();
   }
   const key = process.env.AMAP_KEY;
-  const { location = '', radius = '1000', types = '' } = req.query || {};
+  const { location = '', radius = '1000', types = '', offset = '50', page = '1', sortrule = 'distance' } = req.query || {};
   if (!key) return res.status(500).json({ status: 0, info: 'Missing AMAP_KEY' });
-  const url = `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${encodeURIComponent(location)}&radius=${encodeURIComponent(radius)}&types=${types}&output=json`;
+  const params = new URLSearchParams({
+    key,
+    location,
+    radius,
+    types,
+    output: 'json',
+    offset,
+    page,
+    sortrule
+  });
+  const url = `https://restapi.amap.com/v3/place/around?${params.toString()}`;
   try {
     const r = await fetch(url);
     const data = await r.json();

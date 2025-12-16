@@ -26,7 +26,7 @@
       .legend { position: absolute; right: 12px; bottom: 12px; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; }
       .legend-item { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
       .legend-swatch { width: 14px; height: 14px; border-radius: 50%; }
-      .side { position: absolute; left: 12px; bottom: 12px; max-height: 40%; width: 320px; overflow: auto; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; }
+      .side { position: absolute; left: 12px; bottom: 12px; max-height: 40%; width: 320px; overflow: auto; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; z-index: 5000; }
       .poi-item { padding: 6px 4px; border-bottom: 1px solid #eee; }
       .poi-item:last-child { border-bottom: none; }
     </style>
@@ -144,25 +144,37 @@
 
       async function fetchPOIsAMap(lat, lon, radius) {
         const types = encodeURIComponent('餐饮服务|购物服务|生活服务|金融保险服务');
-        let url = '';
-        if (backendBase) {
-          url = `${backendBase}/api/amap-place-around?location=${lon},${lat}&radius=${radius}&types=${types}`;
-        } else {
-          const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
-          if (!key) throw new Error('请填写高德 key');
-          url = `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${lon},${lat}&radius=${radius}&types=${types}&output=json`;
+        const offset = 50;
+        const maxPages = 10;
+        let page = 1;
+        const out = [];
+        const seen = new Set();
+        while (page <= maxPages) {
+          let url = '';
+          if (backendBase) {
+            url = `${backendBase}/api/amap-place-around?location=${lon},${lat}&radius=${radius}&types=${types}&sortrule=distance&offset=${offset}&page=${page}`;
+          } else {
+            const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+            if (!key) throw new Error('请填写高德 key');
+            url = `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${lon},${lat}&radius=${radius}&types=${types}&output=json&sortrule=distance&offset=${offset}&page=${page}`;
+          }
+          const res = await fetch(url);
+          if (!res.ok) break;
+          const data = await res.json();
+          if (data.status !== '1') break;
+          const pois = data.pois || [];
+          for (const p of pois) {
+            const pos = p.location ? p.location.split(',').reverse().map(Number) : null;
+            const name = p.name || '';
+            const keySig = `${name}|${p.location || ''}`;
+            if (seen.has(keySig)) continue;
+            seen.add(keySig);
+            out.push({ type: 'amap', pos, name, category: p.type, raw: p });
+          }
+          if (pois.length < offset) break;
+          page++;
         }
-        const res = await fetch(url);
-        if (!res.ok) throw new Error('高德POI检索失败');
-        const data = await res.json();
-        if (data.status !== '1') throw new Error(data.info || '高德POI检索失败');
-        return (data.pois || []).map(p => ({
-          type: 'amap',
-          pos: p.location ? p.location.split(',').reverse().map(Number) : null, // [lat, lon]
-          name: p.name,
-          category: p.type,
-          raw: p
-        }));
+        return out;
       }
 
       function jsonp(url) {
@@ -218,6 +230,19 @@
         return null;
       }
 
+      function distanceMeters(a, b) {
+        const toRad = d => d * Math.PI / 180;
+        const R = 6371000;
+        const dLat = toRad(b[0] - a[0]);
+        const dLon = toRad(b[1] - a[1]);
+        const lat1 = toRad(a[0]);
+        const lat2 = toRad(b[0]);
+        const sinDLat = Math.sin(dLat / 2);
+        const sinDLon = Math.sin(dLon / 2);
+        const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
+        return 2 * R * Math.asin(Math.sqrt(h));
+      }
+
       function clearResults() {
         markerLayer.clearLayers();
         if (circleLayer) { map.removeLayer(circleLayer); circleLayer = null; }
@@ -243,19 +268,23 @@
           circleLayer = L.circle(center, { radius, color: '#1976d2', fillColor: '#1976d2', fillOpacity: 0.08, weight: 1 }).addTo(map);
           let elements = [];
           elements = await fetchPOIsAMap(geo.lat, geo.lon, radius);
-          const items = [];
+          const filtered = [];
+          const centerPt = [geo.lat, geo.lon];
           elements.forEach(e => {
             const pos = centerOf(e);
             if (!pos) return;
+            const dist = distanceMeters(centerPt, pos);
+            if (dist > radius) return;
             const type = classify(e);
             const icon = iconMode === 'by-type' ? iconForType(type) : currentIcon;
             const name = e.name || (e.tags && (e.tags.name || e.tags['name:zh'] || e.tags.brand || e.tags.operator)) || '未命名';
             const m = L.marker(pos, { icon }).addTo(markerLayer);
-            m.bindPopup(`<strong>${name}</strong><br/>类型：${type}`);
-            items.push({ name, type });
+            m.bindPopup(`<strong>${name}</strong><br/>类型：${type}<br/>距离：${Math.round(dist)}m`);
+            filtered.push({ name, type, dist });
           });
-          document.getElementById('count').textContent = `POI: ${items.length}`;
-          document.getElementById('side').innerHTML = items.map(i => `<div class="poi-item"><strong>${i.name}</strong><br/>${i.type}</div>`).join('');
+          filtered.sort((a, b) => a.dist - b.dist);
+          document.getElementById('count').textContent = `POI: ${filtered.length}`;
+          document.getElementById('side').innerHTML = filtered.map(i => `<div class="poi-item"><strong>${i.name}</strong><br/>${i.type} · ${Math.round(i.dist)}m</div>`).join('');
           setInputLoading(false);
         } catch (err) {
           setInputLoading(false);
