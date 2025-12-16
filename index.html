@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>商业POI地图</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <style>
+      html, body { height: 100%; margin: 0; }
+      #app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
+      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
+      .toolbar input, .toolbar select, .toolbar button { height: 34px; padding: 0 8px; font-size: 14px; }
+      .input-wrap { position: relative; }
+      .suggest { position: absolute; left: 0; right: 0; top: 38px; background: rgba(255,255,255,0.98); border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); max-height: 260px; overflow: auto; z-index: 10000; }
+      .suggest::-webkit-scrollbar { width: 8px; }
+      .suggest::-webkit-scrollbar-thumb { background: #c7c7c7; border-radius: 4px; }
+      .suggest-item { padding: 8px 10px; font-size: 13px; cursor: pointer; }
+      .suggest-item:hover, .suggest-item.active { background: #f5f5f5; }
+      #map { height: 100%; }
+      .pill { padding: 0 10px; height: 28px; display: inline-flex; align-items: center; border-radius: 14px; background: #f5f5f5; font-size: 12px; }
+      .legend { position: absolute; right: 12px; bottom: 12px; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; }
+      .legend-item { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+      .legend-swatch { width: 14px; height: 14px; border-radius: 50%; }
+      .side { position: absolute; left: 12px; bottom: 12px; max-height: 40%; width: 320px; overflow: auto; background: #fff; padding: 8px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); font-size: 12px; }
+      .poi-item { padding: 6px 4px; border-bottom: 1px solid #eee; }
+      .poi-item:last-child { border-bottom: none; }
+    </style>
+  </head>
+  <body>
+      <div id="app">
+        <div class="toolbar">
+          <div class="input-wrap">
+            <input id="placeInput" type="text" placeholder="输入地点，如 北京 紫金数码园 4号楼" />
+            <div id="placeSuggest" class="suggest" hidden></div>
+          </div>
+          <input id="radiusInput" type="number" min="100" step="100" value="1000" />
+          <select id="styleSelect">
+            <option value="osm">OSM 标准</option>
+            <option value="carto-light">Carto Light</option>
+            <option value="carto-dark">Carto Dark</option>
+          </select>
+          <select id="providerSelect">
+            <option value="osm">数据源：OSM</option>
+            <option value="amap">数据源：高德</option>
+            <option value="baidu">数据源：百度</option>
+          </select>
+          <input id="amapKey" type="password" placeholder="高德 key" style="display:none;" />
+          <input id="baiduAk" type="password" placeholder="百度 ak" style="display:none;" />
+          <select id="iconSelect">
+            <option value="by-type">按类型着色</option>
+            <option value="red">红色图标</option>
+            <option value="blue">蓝色图标</option>
+            <option value="green">绿色图标</option>
+          </select>
+          <button id="searchBtn">确定</button>
+          <span id="count" class="pill">POI: 0</span>
+        </div>
+      <div id="map"></div>
+      <div class="legend" id="legend"></div>
+      <div class="side" id="side"></div>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    ></script>
+    <script>
+      // 可选：通过URL ?backend=https://your-app.vercel.app 指定后端代理基地址
+      const backendBaseParam = new URLSearchParams(location.search).get('backend') || '';
+      let backendBase = backendBaseParam ? backendBaseParam.replace(/\/$/, '') : '';
+      try {
+        if (!backendBase && location.hostname && location.hostname !== 'localhost') {
+          backendBase = location.origin;
+        }
+      } catch (_) {}
+      const tileSources = {
+        osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }),
+        'carto-light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> & OpenStreetMap' }),
+        'carto-dark': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> & OpenStreetMap' })
+      };
+
+      const map = L.map('map', { center: [39.9042, 116.4074], zoom: 13, layers: [tileSources.osm] });
+      let currentTile = tileSources.osm;
+      let circleLayer = null;
+      let markerLayer = L.layerGroup().addTo(map);
+
+      function svgIcon(color) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30"><path d="M15 2c5.523 0 10 4.477 10 10 0 8-10 16-10 16S5 20 5 12C5 6.477 9.477 2 15 2z" fill="${color}"/><circle cx="15" cy="12" r="4" fill="#fff"/></svg>`;
+        const url = 'data:image/svg+xml;base64,' + btoa(svg);
+        return L.icon({ iconUrl: url, iconSize: [30, 30], iconAnchor: [15, 28], popupAnchor: [0, -26] });
+      }
+
+      const colors = { default: '#d81b60', red: '#d81b60', blue: '#2962ff', green: '#2e7d32' };
+      let currentIcon = svgIcon(colors.red);
+      let iconMode = 'by-type';
+
+      const typeLegend = [
+        { key: 'shop', name: '商店/购物', color: '#2962ff' },
+        { key: 'food', name: '餐饮', color: '#d81b60' },
+        { key: 'service', name: '生活服务/金融', color: '#2e7d32' }
+      ];
+      function renderLegend() {
+        const el = document.getElementById('legend');
+        el.innerHTML = typeLegend.map(i => `<div class="legend-item"><span class="legend-swatch" style="background:${i.color}"></span>${i.name}</div>`).join('');
+      }
+      renderLegend();
+
+      async function geocodePlaceOSM(q) {
+        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+        if (!res.ok) throw new Error('OSM地理编码失败');
+        const data = await res.json();
+        if (!data.length) throw new Error('未找到该地点');
+        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), displayName: data[0].display_name };
+      }
+
+      async function geocodePlaceAMap(q, key) {
+        if (!key) throw new Error('请填写高德key');
+        const url = backendBase ? `${backendBase}/api/amap/place-text?keywords=${encodeURIComponent(q)}` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=1&page=1&extensions=base`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('高德地理搜索失败');
+        const data = await res.json();
+        if (data.status !== '1' || !data.pois || !data.pois.length) throw new Error('高德未找到该地点');
+        const p = data.pois[0];
+        const [lng, lat] = (p.location || '').split(',').map(Number);
+        if (!isFinite(lat) || !isFinite(lng)) throw new Error('高德地点无坐标');
+        return { lat, lon: lng, displayName: p.name };
+      }
+
+      async function geocodePlaceBaidu(q, ak) {
+        if (!ak) throw new Error('请填写百度ak');
+        const url = backendBase ? `${backendBase}/api/baidu/place-search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&page_size=1` : `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&output=json&scope=2&ak=${encodeURIComponent(ak)}`;
+        const data = backendBase ? await (await fetch(url)).json() : await jsonp(url);
+        if (data.status !== 0 || !data.results || !data.results.length) throw new Error('百度未找到该地点');
+        const r = data.results[0];
+        if (!r.location) throw new Error('百度地点无坐标');
+        return { lat: r.location.lat, lon: r.location.lng, displayName: r.name };
+      }
+
+      async function suggestPlaces(q) {
+        const provider = providerSelect.value;
+        if (provider === 'amap') {
+          const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
+          if (!key) return [];
+          const url = backendBase ? `${backendBase}/api/amap/place-text?keywords=${encodeURIComponent(q)}&offset=8` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+          const res = await fetch(url);
+          if (!res.ok) return [];
+          const data = await res.json();
+          if (data.status !== '1') return [];
+          return (data.pois || []).map(p => {
+            const [lng, lat] = (p.location || '').split(',').map(Number);
+            return { name: p.name, lat, lon: lng };
+          }).filter(i => isFinite(i.lat) && isFinite(i.lon));
+        } else if (provider === 'baidu') {
+          const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
+          if (!ak) return [];
+          const url = backendBase ? `${backendBase}/api/baidu/place-search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&page_size=8` : `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&output=json&scope=2&ak=${encodeURIComponent(ak)}&page_size=8`;
+          const data = backendBase ? await (await fetch(url)).json() : await jsonp(url);
+          if (data.status !== 0) return [];
+          return (data.results || []).map(r => ({ name: r.name, lat: r.location && r.location.lat, lon: r.location && r.location.lng })).filter(i => isFinite(i.lat) && isFinite(i.lon));
+        } else {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(q)}`;
+          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+          if (!res.ok) return [];
+          const data = await res.json();
+          return data.map(d => ({ name: d.display_name, lat: parseFloat(d.lat), lon: parseFloat(d.lon) }));
+        }
+      }
+
+      function buildOverpassQL(lat, lon, radius) {
+        const q = `[
+          out:json
+        ][timeout:25];
+        (
+          node(around:${radius},${lat},${lon})[shop];
+          node(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
+          way(around:${radius},${lat},${lon})[shop];
+          way(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
+          relation(around:${radius},${lat},${lon})[shop];
+          relation(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
+        );
+        out center tags;`;
+        return q;
+      }
+
+      async function fetchPOIsOSM(lat, lon, radius) {
+        const q = buildOverpassQL(lat, lon, radius);
+        const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: q });
+        if (!res.ok) throw new Error('POI检索失败');
+        const data = await res.json();
+        return data.elements || [];
+      }
+
+      async function fetchPOIsAMap(lat, lon, radius, key) {
+        if (!key) throw new Error('请填写高德 key');
+        const types = encodeURIComponent('餐饮服务|购物服务|生活服务|金融保险服务');
+        const url = backendBase ? `${backendBase}/api/amap/place-around?location=${lon},${lat}&radius=${radius}&types=${types}` : `https://restapi.amap.com/v3/place/around?key=${encodeURIComponent(key)}&location=${lon},${lat}&radius=${radius}&types=${types}&output=json`; 
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('高德POI检索失败');
+        const data = await res.json();
+        if (data.status !== '1') throw new Error(data.info || '高德POI检索失败');
+        return (data.pois || []).map(p => ({
+          type: 'amap',
+          pos: p.location ? p.location.split(',').reverse().map(Number) : null, // [lat, lon]
+          name: p.name,
+          category: p.type,
+          raw: p
+        }));
+      }
+
+      function jsonp(url) {
+        return new Promise((resolve, reject) => {
+          const cb = '__bd_cb_' + Math.random().toString(36).slice(2);
+          url += (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+          const s = document.createElement('script');
+          s.src = url;
+          s.onerror = () => { delete window[cb]; reject(new Error('JSONP请求失败')); };
+          window[cb] = (data) => { delete window[cb]; resolve(data); };
+          document.body.appendChild(s);
+        });
+      }
+
+      async function fetchPOIsBaidu(lat, lon, radius, ak) {
+        if (!ak) throw new Error('请填写百度 ak');
+        const query = encodeURIComponent('美食$商场$超市$银行$药店$酒店$咖啡$便利店$购物$餐饮$服务');
+        const url = backendBase ? `${backendBase}/api/baidu/place-search?query=${query}&location=${lat},${lon}&radius=${radius}` : `https://api.map.baidu.com/place/v2/search?query=${query}&location=${lat},${lon}&radius=${radius}&output=json&scope=2&ak=${encodeURIComponent(ak)}`;
+        const data = backendBase ? await (await fetch(url)).json() : await jsonp(url);
+        if (data.status !== 0) throw new Error(data.message || '百度POI检索失败');
+        return (data.results || []).map(r => ({
+          type: 'baidu',
+          pos: r.location ? [r.location.lat, r.location.lng] : null,
+          name: r.name,
+          category: r.category || r.tags || '',
+          raw: r
+        }));
+      }
+
+      function classify(e) {
+        if (e && e.type === 'amap') {
+          const cat = e.category || '';
+          if (/餐饮/.test(cat)) return 'food';
+          if (/购物/.test(cat)) return 'shop';
+          if (/生活服务|金融/.test(cat)) return 'service';
+          return 'service';
+        }
+        if (e && e.type === 'baidu') {
+          const cat = e.category || '';
+          if (/美食|餐饮|咖啡/.test(cat)) return 'food';
+          if (/商场|超市|购物|便利店/.test(cat)) return 'shop';
+          if (/银行|药店|酒店|服务/.test(cat)) return 'service';
+          return 'service';
+        }
+        const t = e.tags || {};
+        if (t.amenity && /restaurant|cafe|fast_food|bar|pub/.test(t.amenity)) return 'food';
+        if (t.amenity && /bank|pharmacy|marketplace|clinic|atm|bureau_de_change/.test(t.amenity)) return 'service';
+        if (t.shop) return 'shop';
+        return 'service';
+      }
+
+      function colorForType(type) {
+        if (type === 'shop') return '#2962ff';
+        if (type === 'food') return '#d81b60';
+        return '#2e7d32';
+      }
+
+      function iconForType(type) {
+        return svgIcon(colorForType(type));
+      }
+
+      function centerOf(e) {
+        if (e.type === 'node') return [e.lat, e.lon];
+        if (e.type === 'way' || e.type === 'relation') { const c = e.center; if (c) return [c.lat, c.lon]; }
+        if (e.type === 'amap' || e.type === 'baidu') return e.pos || null;
+        return null;
+      }
+
+      function clearResults() {
+        markerLayer.clearLayers();
+        if (circleLayer) { map.removeLayer(circleLayer); circleLayer = null; }
+        document.getElementById('count').textContent = 'POI: 0';
+        document.getElementById('side').innerHTML = '';
+      }
+
+      async function runSearch(preset) {
+        const place = document.getElementById('placeInput').value.trim();
+        const radius = parseInt(document.getElementById('radiusInput').value, 10) || 1000;
+        if (!place) return;
+        clearResults();
+        try {
+          let geo = null;
+          if (preset) {
+            geo = { lat: preset.lat, lon: preset.lon, displayName: preset.name };
+          } else {
+            const provider = providerSelect.value;
+            if (provider === 'amap') {
+              const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
+              try { geo = await geocodePlaceAMap(place, key); } catch (e) { geo = await geocodePlaceOSM(place); }
+            } else if (provider === 'baidu') {
+              const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
+              try { geo = await geocodePlaceBaidu(place, ak); } catch (e) { geo = await geocodePlaceOSM(place); }
+            } else {
+              geo = await geocodePlaceOSM(place);
+            }
+          }
+          const center = [geo.lat, geo.lon];
+          map.setView(center, 15);
+          circleLayer = L.circle(center, { radius, color: '#1976d2', fillColor: '#1976d2', fillOpacity: 0.08, weight: 1 }).addTo(map);
+          const provider = providerSelect.value;
+          let elements = [];
+          if (provider === 'osm') {
+            elements = await fetchPOIsOSM(geo.lat, geo.lon, radius);
+          } else if (provider === 'amap') {
+            const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
+            if (amapKey.value.trim()) localStorage.setItem('amap_key', amapKey.value.trim());
+            elements = await fetchPOIsAMap(geo.lat, geo.lon, radius, key);
+          } else if (provider === 'baidu') {
+            const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
+            if (baiduAk.value.trim()) localStorage.setItem('baidu_ak', baiduAk.value.trim());
+            elements = await fetchPOIsBaidu(geo.lat, geo.lon, radius, ak);
+          }
+          const items = [];
+          elements.forEach(e => {
+            const pos = centerOf(e);
+            if (!pos) return;
+            const type = classify(e);
+            const icon = iconMode === 'by-type' ? iconForType(type) : currentIcon;
+            const name = e.name || (e.tags && (e.tags.name || e.tags['name:zh'] || e.tags.brand || e.tags.operator)) || '未命名';
+            const m = L.marker(pos, { icon }).addTo(markerLayer);
+            m.bindPopup(`<strong>${name}</strong><br/>类型：${type}`);
+            items.push({ name, type });
+          });
+          document.getElementById('count').textContent = `POI: ${items.length}`;
+          document.getElementById('side').innerHTML = items.map(i => `<div class="poi-item"><strong>${i.name}</strong><br/>${i.type}</div>`).join('');
+        } catch (err) {
+          alert(err.message || '发生错误');
+        }
+      }
+
+      document.getElementById('searchBtn').addEventListener('click', () => runSearch());
+      const placeInput = document.getElementById('placeInput');
+      const suggestEl = document.getElementById('placeSuggest');
+      let suggestTimer = null;
+      let suggestIndex = -1;
+      let suggestData = [];
+      placeInput.addEventListener('input', () => {
+        const q = placeInput.value.trim();
+        if (suggestTimer) clearTimeout(suggestTimer);
+        if (q.length < 2) { suggestEl.hidden = true; suggestEl.innerHTML = ''; suggestData = []; suggestIndex = -1; return; }
+        suggestTimer = setTimeout(async () => {
+          const list = await suggestPlaces(q);
+          suggestData = list;
+          suggestIndex = -1;
+          if (!list.length) { suggestEl.hidden = true; suggestEl.innerHTML = ''; return; }
+          suggestEl.innerHTML = list.map((i, idx) => `<div class="suggest-item" data-idx="${idx}">${i.name}</div>`).join('');
+          suggestEl.hidden = false;
+        }, 250);
+      });
+      placeInput.addEventListener('keydown', e => {
+        if (suggestEl.hidden) { if (e.key === 'Enter') runSearch(); return; }
+        const max = suggestData.length;
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          suggestIndex = (suggestIndex + 1) % max;
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          suggestIndex = (suggestIndex - 1 + max) % max;
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          if (suggestIndex >= 0 && suggestIndex < max) {
+            const item = suggestData[suggestIndex];
+            placeInput.value = item.name;
+            suggestEl.hidden = true;
+            runSearch(item);
+          } else {
+            runSearch();
+          }
+          return;
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          suggestEl.hidden = true;
+          return;
+        } else {
+          return;
+        }
+        Array.from(suggestEl.children).forEach((el, idx) => {
+          if (idx === suggestIndex) el.classList.add('active'); else el.classList.remove('active');
+        });
+      });
+      suggestEl.addEventListener('mousedown', e => {
+        const target = e.target.closest('.suggest-item');
+        if (!target) return;
+        const idx = parseInt(target.getAttribute('data-idx'), 10);
+        if (isNaN(idx)) return;
+        const item = suggestData[idx];
+        placeInput.value = item.name;
+        suggestEl.hidden = true;
+        runSearch(item);
+      });
+
+      document.getElementById('styleSelect').addEventListener('change', e => {
+        const v = e.target.value;
+        if (currentTile) map.removeLayer(currentTile);
+        currentTile = tileSources[v] || tileSources.osm;
+        currentTile.addTo(map);
+      });
+
+      document.getElementById('iconSelect').addEventListener('change', e => {
+        const v = e.target.value;
+        if (v === 'by-type') {
+          iconMode = 'by-type';
+        } else {
+          iconMode = 'custom';
+          currentIcon = svgIcon(colors[v] || colors.default);
+        }
+      });
+
+      const providerSelect = document.getElementById('providerSelect');
+      const amapKey = document.getElementById('amapKey');
+      const baiduAk = document.getElementById('baiduAk');
+      // 初始化本地存储的key
+      const savedAmap = localStorage.getItem('amap_key'); if (savedAmap) amapKey.value = savedAmap;
+      const savedBaidu = localStorage.getItem('baidu_ak'); if (savedBaidu) baiduAk.value = savedBaidu;
+      // 支持通过URL注入密钥：?amap_key=xxx 或 ?baidu_ak=yyy
+      try {
+        const params = new URLSearchParams(location.search);
+        const pAmap = params.get('amap_key');
+        const pBaidu = params.get('baidu_ak');
+        if (pAmap) { localStorage.setItem('amap_key', pAmap); amapKey.value = pAmap; providerSelect.value = 'amap'; }
+        if (pBaidu) { localStorage.setItem('baidu_ak', pBaidu); baiduAk.value = pBaidu; providerSelect.value = 'baidu'; }
+      } catch (_) {}
+      providerSelect.addEventListener('change', () => {
+        const v = providerSelect.value;
+        amapKey.style.display = v === 'amap' ? 'block' : 'none';
+        baiduAk.style.display = v === 'baidu' ? 'block' : 'none';
+      });
+      // 初始隐藏状态
+      amapKey.style.display = providerSelect.value === 'amap' ? 'block' : 'none';
+      baiduAk.style.display = providerSelect.value === 'baidu' ? 'block' : 'none';
+    </script>
+  </body>
+  </html>
