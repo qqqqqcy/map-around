@@ -7,6 +7,7 @@
   "routes": [
     { "src": "/api/amap-place-text", "dest": "/api/amap-place-text.js" },
     { "src": "/api/amap-place-around", "dest": "/api/amap-place-around.js" },
+    { "src": "/api/amap-input-tip", "dest": "/api/amap-input-tip.js" },
     { "src": "/api/(.*)", "dest": "/api/$1.js" }
   ]
 }

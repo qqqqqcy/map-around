@@ -2,14 +2,28 @@ export function detectBackendBase(): string {
   const params = new URLSearchParams(location.search)
   const backendParam = params.get('backend') || ''
   const envBase = (import.meta as any).env?.VITE_BACKEND_BASE || ''
-  const base = (backendParam || envBase).replace(/\/$/, '')
+  let base = (backendParam || envBase).replace(/\/$/, '')
+  try {
+    const host = String(location.hostname || '')
+    const isLocal = host === 'localhost' || host.startsWith('127.') || host === '0.0.0.0'
+    if (!base && host && !isLocal) base = location.origin
+  } catch {}
   return base
 }
 
 function detectAmapKey(): string {
   const params = new URLSearchParams(location.search)
-  const envKey = (import.meta as any).env?.AMAP_KEY || ''
+  const envKey = (import.meta as any).env?.VITE_AMAP_KEY || ''
   return params.get('amap_key') || envKey
+}
+
+function isNonLocalHost(): boolean {
+  try {
+    const host = String(location.hostname || '')
+    return !!host && host !== 'localhost' && !host.startsWith('127.') && host !== '0.0.0.0'
+  } catch {
+    return false
+  }
 }
 
 const CACHE_TTL_MS = 5 * 60 * 1000
@@ -58,6 +72,10 @@ export async function amapText(backendBase: string, keywords: string) {
     const url = `${backendBase}/api/amap-place-text?keywords=${encodeURIComponent(keywords)}`
     return fetchWithCache(url)
   }
+  if (isNonLocalHost()) {
+    const url = `/api/amap-place-text?keywords=${encodeURIComponent(keywords)}`
+    return fetchWithCache(url)
+  }
   if (directKey) {
     const qs = sortedParams({ key: directKey, keywords, citylimit: 'false', offset: '8', page: '1', extensions: 'base' })
     const url = `https://restapi.amap.com/v3/place/text?${qs}`
@@ -71,6 +89,10 @@ export async function amapAround(backendBase: string, paramsObj: Record<string, 
   const qs = sortedParams(paramsObj)
   if (backendBase) {
     const url = `${backendBase}/api/amap-place-around?${qs}`
+    return fetchNoCache(url)
+  }
+  if (isNonLocalHost()) {
+    const url = `/api/amap-place-around?${qs}`
     return fetchNoCache(url)
   }
   if (directKey) {
@@ -87,6 +109,11 @@ export async function amapTips(backendBase: string, keywords: string, loc?: { la
   if (backendBase) {
     const qs = sortedParams(location ? { keywords, citylimit: 'false', location } : { keywords, citylimit: 'false' })
     const url = `${backendBase}/api/amap-input-tips?${qs}`
+    return fetchWithCache(url)
+  }
+  if (isNonLocalHost()) {
+    const qs = sortedParams(location ? { keywords, citylimit: 'false', location } : { keywords, citylimit: 'false' })
+    const url = `/api/amap-input-tips?${qs}`
     return fetchWithCache(url)
   }
   if (directKey) {
