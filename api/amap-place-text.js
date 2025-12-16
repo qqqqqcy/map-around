@@ -1,6 +1,9 @@
 export default async function handler(req, res) {
+  const origin = req.headers.origin || '*';
+  const allowed = process.env.ALLOWED_ORIGIN;
+  const allowOrigin = allowed ? (origin === allowed ? origin : allowed) : origin;
   if (req.method === 'OPTIONS') {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     return res.status(200).end();
@@ -12,11 +15,10 @@ export default async function handler(req, res) {
   try {
     const r = await fetch(url);
     const data = await r.json();
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.status(200).json(data);
   } catch (e) {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+    res.setHeader('Access-Control-Allow-Origin', allowOrigin);
     res.status(500).json({ status: 0, info: 'amap proxy error', error: String(e) });
   }
 }
-

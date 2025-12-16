@@ -1,5 +1,7 @@
 export default function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
+  const origin = req.headers.origin || '*';
+  const allowed = process.env.ALLOWED_ORIGIN;
+  const allowOrigin = allowed ? (origin === allowed ? origin : allowed) : origin;
+  res.setHeader('Access-Control-Allow-Origin', allowOrigin);
   res.status(200).json({ ok: true });
 }
-

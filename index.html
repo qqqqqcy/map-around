@@ -11,7 +11,7 @@
     <style>
       html, body { height: 100%; margin: 0; }
       #app { height: 100%; display: grid; grid-template-rows: auto 1fr; }
-      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
+      .toolbar { padding: 10px; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.1); display: grid; grid-template-columns: 1fr auto auto auto auto auto; gap: 8px; align-items: center; position: relative; z-index: 2000; }
       .toolbar input, .toolbar select, .toolbar button { height: 34px; padding: 0 8px; font-size: 14px; }
       .input-wrap { position: relative; }
       .suggest { position: absolute; left: 0; right: 0; top: 38px; background: rgba(255,255,255,0.98); border: 1px solid #e0e0e0; border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); max-height: 260px; overflow: auto; z-index: 10000; }
@@ -42,13 +42,6 @@
             <option value="carto-light">Carto Light</option>
             <option value="carto-dark">Carto Dark</option>
           </select>
-          <select id="providerSelect">
-            <option value="osm">数据源：OSM</option>
-            <option value="amap">数据源：高德</option>
-            <option value="baidu">数据源：百度</option>
-          </select>
-          <input id="amapKey" type="password" placeholder="高德 key" style="display:none;" />
-          <input id="baiduAk" type="password" placeholder="百度 ak" style="display:none;" />
           <select id="iconSelect">
             <option value="by-type">按类型着色</option>
             <option value="red">红色图标</option>
@@ -75,6 +68,15 @@
           backendBase = location.origin;
         }
       } catch (_) {}
+      (async () => {
+        if (!backendBase) return;
+        try {
+          const r = await fetch(backendBase + '/api/status', { cache: 'no-store' });
+          if (!r.ok) backendBase = '';
+        } catch (e) {
+          backendBase = '';
+        }
+      })();
       const tileSources = {
         osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap contributors' }),
         'carto-light': L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> & OpenStreetMap' }),
@@ -107,15 +109,6 @@
       }
       renderLegend();
 
-      async function geocodePlaceOSM(q) {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(q)}`;
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-        if (!res.ok) throw new Error('OSM地理编码失败');
-        const data = await res.json();
-        if (!data.length) throw new Error('未找到该地点');
-        return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), displayName: data[0].display_name };
-      }
-
       async function geocodePlaceAMap(q, key) {
         if (!key) throw new Error('请填写高德key');
         const url = backendBase ? `${backendBase}/api/amap/place-text?keywords=${encodeURIComponent(q)}` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=1&page=1&extensions=base`;
@@ -129,68 +122,17 @@
         return { lat, lon: lng, displayName: p.name };
       }
 
-      async function geocodePlaceBaidu(q, ak) {
-        if (!ak) throw new Error('请填写百度ak');
-        const url = backendBase ? `${backendBase}/api/baidu/place-search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&page_size=1` : `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&output=json&scope=2&ak=${encodeURIComponent(ak)}`;
-        const data = backendBase ? await (await fetch(url)).json() : await jsonp(url);
-        if (data.status !== 0 || !data.results || !data.results.length) throw new Error('百度未找到该地点');
-        const r = data.results[0];
-        if (!r.location) throw new Error('百度地点无坐标');
-        return { lat: r.location.lat, lon: r.location.lng, displayName: r.name };
-      }
-
       async function suggestPlaces(q) {
-        const provider = providerSelect.value;
-        if (provider === 'amap') {
-          const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
-          if (!key) return [];
-          const url = backendBase ? `${backendBase}/api/amap/place-text?keywords=${encodeURIComponent(q)}&offset=8` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
-          const res = await fetch(url);
-          if (!res.ok) return [];
-          const data = await res.json();
-          if (data.status !== '1') return [];
-          return (data.pois || []).map(p => {
-            const [lng, lat] = (p.location || '').split(',').map(Number);
-            return { name: p.name, lat, lon: lng };
-          }).filter(i => isFinite(i.lat) && isFinite(i.lon));
-        } else if (provider === 'baidu') {
-          const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
-          if (!ak) return [];
-          const url = backendBase ? `${backendBase}/api/baidu/place-search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&page_size=8` : `https://api.map.baidu.com/place/v2/search?query=${encodeURIComponent(q)}&region=${encodeURIComponent('全国')}&output=json&scope=2&ak=${encodeURIComponent(ak)}&page_size=8`;
-          const data = backendBase ? await (await fetch(url)).json() : await jsonp(url);
-          if (data.status !== 0) return [];
-          return (data.results || []).map(r => ({ name: r.name, lat: r.location && r.location.lat, lon: r.location && r.location.lng })).filter(i => isFinite(i.lat) && isFinite(i.lon));
-        } else {
-          const url = `https://nominatim.openstreetmap.org/search?format=json&limit=8&q=${encodeURIComponent(q)}`;
-          const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
-          if (!res.ok) return [];
-          const data = await res.json();
-          return data.map(d => ({ name: d.display_name, lat: parseFloat(d.lat), lon: parseFloat(d.lon) }));
-        }
-      }
-
-      function buildOverpassQL(lat, lon, radius) {
-        const q = `[
-          out:json
-        ][timeout:25];
-        (
-          node(around:${radius},${lat},${lon})[shop];
-          node(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
-          way(around:${radius},${lat},${lon})[shop];
-          way(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
-          relation(around:${radius},${lat},${lon})[shop];
-          relation(around:${radius},${lat},${lon})[amenity~"restaurant|cafe|fast_food|bar|pub|bank|pharmacy|marketplace|clinic|atm|bureau_de_change"]; 
-        );
-        out center tags;`;
-        return q;
-      }
-
-      async function fetchPOIsOSM(lat, lon, radius) {
-        const q = buildOverpassQL(lat, lon, radius);
-        const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: q });
-        if (!res.ok) throw new Error('POI检索失败');
+        const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+        const url = backendBase ? `${backendBase}/api/amap/place-text?keywords=${encodeURIComponent(q)}&offset=8` : `https://restapi.amap.com/v3/place/text?key=${encodeURIComponent(key)}&keywords=${encodeURIComponent(q)}&citylimit=false&offset=8&page=1&extensions=base`;
+        const res = await fetch(url);
+        if (!res.ok) return [];
         const data = await res.json();
-        return data.elements || [];
+        if (data.status !== '1') return [];
+        return (data.pois || []).map(p => {
+          const [lng, lat] = (p.location || '').split(',').map(Number);
+          return { name: p.name, lat, lon: lng };
+        }).filter(i => isFinite(i.lat) && isFinite(i.lon));
       }
 
       async function fetchPOIsAMap(lat, lon, radius, key) {
@@ -245,17 +187,6 @@
           if (/生活服务|金融/.test(cat)) return 'service';
           return 'service';
         }
-        if (e && e.type === 'baidu') {
-          const cat = e.category || '';
-          if (/美食|餐饮|咖啡/.test(cat)) return 'food';
-          if (/商场|超市|购物|便利店/.test(cat)) return 'shop';
-          if (/银行|药店|酒店|服务/.test(cat)) return 'service';
-          return 'service';
-        }
-        const t = e.tags || {};
-        if (t.amenity && /restaurant|cafe|fast_food|bar|pub/.test(t.amenity)) return 'food';
-        if (t.amenity && /bank|pharmacy|marketplace|clinic|atm|bureau_de_change/.test(t.amenity)) return 'service';
-        if (t.shop) return 'shop';
         return 'service';
       }
 
@@ -270,9 +201,7 @@
       }
 
       function centerOf(e) {
-        if (e.type === 'node') return [e.lat, e.lon];
-        if (e.type === 'way' || e.type === 'relation') { const c = e.center; if (c) return [c.lat, c.lon]; }
-        if (e.type === 'amap' || e.type === 'baidu') return e.pos || null;
+        if (e.type === 'amap') return e.pos || null;
         return null;
       }
 
@@ -293,33 +222,15 @@
           if (preset) {
             geo = { lat: preset.lat, lon: preset.lon, displayName: preset.name };
           } else {
-            const provider = providerSelect.value;
-            if (provider === 'amap') {
-              const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
-              try { geo = await geocodePlaceAMap(place, key); } catch (e) { geo = await geocodePlaceOSM(place); }
-            } else if (provider === 'baidu') {
-              const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
-              try { geo = await geocodePlaceBaidu(place, ak); } catch (e) { geo = await geocodePlaceOSM(place); }
-            } else {
-              geo = await geocodePlaceOSM(place);
-            }
+            const key = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+            geo = await geocodePlaceAMap(place, key);
           }
           const center = [geo.lat, geo.lon];
           map.setView(center, 15);
           circleLayer = L.circle(center, { radius, color: '#1976d2', fillColor: '#1976d2', fillOpacity: 0.08, weight: 1 }).addTo(map);
-          const provider = providerSelect.value;
           let elements = [];
-          if (provider === 'osm') {
-            elements = await fetchPOIsOSM(geo.lat, geo.lon, radius);
-          } else if (provider === 'amap') {
-            const key = amapKey.value.trim() || localStorage.getItem('amap_key') || '';
-            if (amapKey.value.trim()) localStorage.setItem('amap_key', amapKey.value.trim());
-            elements = await fetchPOIsAMap(geo.lat, geo.lon, radius, key);
-          } else if (provider === 'baidu') {
-            const ak = baiduAk.value.trim() || localStorage.getItem('baidu_ak') || '';
-            if (baiduAk.value.trim()) localStorage.setItem('baidu_ak', baiduAk.value.trim());
-            elements = await fetchPOIsBaidu(geo.lat, geo.lon, radius, ak);
-          }
+          const key2 = localStorage.getItem('amap_key') || new URLSearchParams(location.search).get('amap_key') || '';
+          elements = await fetchPOIsAMap(geo.lat, geo.lon, radius, key2);
           const items = [];
           elements.forEach(e => {
             const pos = centerOf(e);
@@ -416,28 +327,8 @@
         }
       });
 
-      const providerSelect = document.getElementById('providerSelect');
-      const amapKey = document.getElementById('amapKey');
-      const baiduAk = document.getElementById('baiduAk');
-      // 初始化本地存储的key
-      const savedAmap = localStorage.getItem('amap_key'); if (savedAmap) amapKey.value = savedAmap;
-      const savedBaidu = localStorage.getItem('baidu_ak'); if (savedBaidu) baiduAk.value = savedBaidu;
-      // 支持通过URL注入密钥：?amap_key=xxx 或 ?baidu_ak=yyy
-      try {
-        const params = new URLSearchParams(location.search);
-        const pAmap = params.get('amap_key');
-        const pBaidu = params.get('baidu_ak');
-        if (pAmap) { localStorage.setItem('amap_key', pAmap); amapKey.value = pAmap; providerSelect.value = 'amap'; }
-        if (pBaidu) { localStorage.setItem('baidu_ak', pBaidu); baiduAk.value = pBaidu; providerSelect.value = 'baidu'; }
-      } catch (_) {}
-      providerSelect.addEventListener('change', () => {
-        const v = providerSelect.value;
-        amapKey.style.display = v === 'amap' ? 'block' : 'none';
-        baiduAk.style.display = v === 'baidu' ? 'block' : 'none';
-      });
-      // 初始隐藏状态
-      amapKey.style.display = providerSelect.value === 'amap' ? 'block' : 'none';
-      baiduAk.style.display = providerSelect.value === 'baidu' ? 'block' : 'none';
+      // 移除数据源选择与密钥输入；在有后端代理时不需要任何密钥输入
+      // 本地调试可通过 URL ?amap_key=xxx 注入临时密钥
     </script>
   </body>
   </html>
